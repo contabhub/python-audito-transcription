@@ -13,29 +13,48 @@ function App() {
     const handleTranscribe = async () => {
         if (!link) return;
         setStatus('loading');
-        setMessage('Accessing file and starting download...');
+        setMessage('Queueing job...');
         setTranscript('');
 
         try {
-            // Change to relative path if served from same origin, or full URL for dev
-            // In production (Render), we will serve frontend from backend, so /api is fine.
-            // In dev, Vite proxy handles /api -> localhost:8000
+            // 1. Start Job
             const response = await axios.post('/api/transcribe', {
                 drive_link: link,
                 model_name: model
             });
 
-            if (response.data.transcript) {
-                setTranscript(response.data.transcript);
-                setStatus('success');
-                setMessage('Transcription complete!');
-            } else {
-                throw new Error('No transcript received.');
-            }
+            const jobId = response.data.job_id;
+            setMessage('Job queued. Waiting for completion...');
+
+            // 2. Poll Status
+            const pollInterval = setInterval(async () => {
+                try {
+                    const statusRes = await axios.get(`/api/job/${jobId}`);
+                    const jobData = statusRes.data;
+
+                    if (jobData.status === 'completed') {
+                        clearInterval(pollInterval);
+                        setTranscript(jobData.transcript);
+                        setStatus('success');
+                        setMessage('Transcription complete!');
+                    } else if (jobData.status === 'failed') {
+                        clearInterval(pollInterval);
+                        setStatus('error');
+                        setMessage(`Error: ${jobData.message}`);
+                    } else {
+                        // Update progress message if available
+                        setMessage(`Status: ${jobData.status} - ${jobData.message || 'Processing...'}`);
+                    }
+                } catch (err) {
+                    console.error("Polling error", err);
+                    // Don't stop polling on transient network errors immediately
+                }
+            }, 3000); // Poll every 3 seconds
+
         } catch (error) {
             console.error(error);
             setStatus('error');
-            setMessage(error.response?.data?.detail || 'An error occurred during transcription.');
+            setMessage(error.response?.data?.detail || 'Failed to start transcription job.');
         }
     };
 
@@ -118,8 +137,8 @@ function App() {
                         onClick={handleTranscribe}
                         disabled={status === 'loading' || !link}
                         className={`w-full py-4 rounded-xl font-semibold text-lg shadow-lg flex items-center justify-center gap-2 transition-all ${status === 'loading'
-                                ? 'bg-slate-700 cursor-not-allowed text-slate-400'
-                                : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-500/20'
+                            ? 'bg-slate-700 cursor-not-allowed text-slate-400'
+                            : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-500/20'
                             }`}
                     >
                         {status === 'loading' ? (
@@ -139,8 +158,8 @@ function App() {
                                 animate={{ opacity: 1, height: 'auto' }}
                                 exit={{ opacity: 0, height: 0 }}
                                 className={`rounded-lg p-4 flex items-start gap-3 ${status === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                                        status === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                                            'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                                    status === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                                        'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
                                     }`}
                             >
                                 {status === 'error' ? <AlertTriangle className="w-5 h-5 shrink-0" /> :
